@@ -21,10 +21,21 @@ type Endpoint struct {
 type ResponseStrategy struct {
 	Static   *Response          `yaml:"static"`
 	Weighted []WeightedResponse `yaml:"weighted"`
+	Sequence *SequencedResponse `yaml:"sequence"`
 }
 
 type WeightedResponse struct {
 	Weight   int      `yaml:"weight"`
+	Response Response `yaml:"response"`
+}
+
+type SequencedResponse struct {
+	EndBehavior string                   `yaml:"endBehavior"`
+	Responses   []SequencedResponseEntry `yaml:"responses"`
+}
+
+type SequencedResponseEntry struct {
+	Count    *int     `yaml:"count"`
 	Response Response `yaml:"response"`
 }
 
@@ -44,27 +55,36 @@ func (c Config) RestEndpoints() ([]*rest.Endpoint, error) {
 
 	for _, endpointCfg := range c.Endpoints {
 		strategy := endpointCfg.ResponseStrategy
-		if strategy.Static != nil && strategy.Weighted != nil {
-			return nil, fmt.Errorf("multiple response strategies for endpoint %q", endpointCfg.Path)
-		}
 
 		var resolver rest.ResponseResolver
+		var strategyCount int
 		if strategy.Static != nil {
+			strategyCount++
 			resp, err := strategy.Static.toRest()
 			if err != nil {
 				return nil, fmt.Errorf("build response for endpoint %q: %w", endpointCfg.Path, err)
 			}
 			resolver = rest.StaticResponse(resp)
-		} else if strategy.Weighted != nil {
+		}
+		if strategy.Weighted != nil {
+			strategyCount++
 			resp, err := convertWeightedToRest(strategy.Weighted)
 			if err != nil {
 				return nil, fmt.Errorf("build weighted response for endpoint %q: %w", endpointCfg.Path, err)
 			}
 			resolver = resp
 		}
+		if strategy.Sequence != nil {
+			strategyCount++
+			resp, err := convertSequencedToRest(strategy.Sequence)
+			if err != nil {
+				return nil, fmt.Errorf("build sequenced response for endpoint %q: %w", endpointCfg.Path, err)
+			}
+			resolver = resp
+		}
 
-		if resolver == nil {
-			return nil, fmt.Errorf("no response strategy for endpoint %q", endpointCfg.Path)
+		if resolver == nil || strategyCount != 1 {
+			return nil, fmt.Errorf("endpoint %q must have exactly one response strategy but had %d", endpointCfg.Path, strategyCount)
 		}
 
 		endpoint := rest.NewEndpoint(endpointCfg.Path, endpointCfg.Method, resolver)
@@ -109,4 +129,33 @@ func convertWeightedToRest(weighted []WeightedResponse) (*rest.WeightedResponse,
 	}
 
 	return rest.NewWeightedResponse(weightedMap)
+}
+
+func convertSequencedToRest(sequencedResp *SequencedResponse) (*rest.SequencedResponse, error) {
+	var sequence []rest.Response
+
+	for _, respEntry := range sequencedResp.Responses {
+		count := 1
+		if respEntry.Count != nil {
+			if *respEntry.Count <= 0 {
+				return nil, fmt.Errorf("sequence response count must be >= 1: %d", *respEntry.Count)
+			}
+			count = *respEntry.Count
+		}
+
+		resp, err := respEntry.Response.toRest()
+		if err != nil {
+			return nil, fmt.Errorf("build sequence response: %w", err)
+		}
+
+		for range count {
+			sequence = append(sequence, resp)
+		}
+	}
+
+	endBehavior := rest.SequenceEndBehaviorRepeatLast
+	if sequencedResp.EndBehavior != "" {
+		endBehavior = rest.SequenceEndBehavior(sequencedResp.EndBehavior)
+	}
+	return rest.NewSequencedResponse(endBehavior, sequence)
 }

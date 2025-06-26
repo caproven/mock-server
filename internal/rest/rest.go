@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"sync"
 )
 
 type ResponseResolver interface {
@@ -62,6 +63,53 @@ func (w *WeightedResponse) NextResponse() Response {
 
 	slog.Warn("didn't find a weighted response")
 	return Response{}
+}
+
+type SequenceEndBehavior string
+
+const (
+	SequenceEndBehaviorLoop       SequenceEndBehavior = "loop"
+	SequenceEndBehaviorRepeatLast SequenceEndBehavior = "repeatLast"
+)
+
+type SequencedResponse struct {
+	endBehavior SequenceEndBehavior
+	sequence    []Response
+
+	idx int
+	mu  sync.Mutex
+}
+
+func NewSequencedResponse(endBehavior SequenceEndBehavior, sequence []Response) (*SequencedResponse, error) {
+	switch endBehavior {
+	case SequenceEndBehaviorLoop, SequenceEndBehaviorRepeatLast:
+	default:
+		return nil, fmt.Errorf("unknown sequence end behavior %q", endBehavior)
+	}
+	if len(sequence) == 0 {
+		return nil, errors.New("no sequence responses")
+	}
+
+	sequencedResp := &SequencedResponse{
+		endBehavior: endBehavior,
+		sequence:    sequence,
+	}
+	return sequencedResp, nil
+}
+
+func (s *SequencedResponse) NextResponse() Response {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resp := s.sequence[s.idx]
+	if s.idx < len(s.sequence)-1 { // have remaining sequence
+		s.idx++
+	} else if s.idx >= len(s.sequence)-1 && s.endBehavior == SequenceEndBehaviorLoop {
+		s.idx++
+		s.idx %= len(s.sequence)
+	}
+
+	return resp
 }
 
 type Endpoint struct {
