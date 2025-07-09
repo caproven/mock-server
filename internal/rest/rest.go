@@ -158,10 +158,10 @@ func RegisterHandlers(mux httpMux, endpoints []*Endpoint) {
 
 			resp := endpoint.Response()
 
-			w.WriteHeader(resp.StatusCode)
 			for header, val := range resp.Headers {
 				w.Header().Set(header, val)
 			}
+			w.WriteHeader(resp.StatusCode)
 			if _, err := w.Write(resp.Body); err != nil {
 				slog.Warn("failed to write response", "err", err)
 				return
