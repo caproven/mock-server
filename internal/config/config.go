@@ -101,7 +101,10 @@ func (r Response) toRest() (rest.Response, error) {
 	if len(r.Delay) > 0 {
 		d, err := time.ParseDuration(r.Delay)
 		if err != nil {
-			return rest.Response{}, fmt.Errorf("invalid response delay: %q", r.Delay)
+			return rest.Response{}, fmt.Errorf("invalid response delay %q", r.Delay)
+		}
+		if d < 0 {
+			return rest.Response{}, errors.New("response delay cannot be negative")
 		}
 		respDelay = d
 	}
