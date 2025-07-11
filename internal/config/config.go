@@ -44,7 +44,7 @@ type Response struct {
 	StatusCode int               `yaml:"status"`
 	Headers    map[string]string `yaml:"headers"`
 	Body       ResponseBody      `yaml:"body"`
-	Delay      time.Duration     `yaml:"delay"`
+	Delay      string            `yaml:"delay"`
 }
 
 type ResponseBody struct {
@@ -97,8 +97,13 @@ func (c Config) RestEndpoints() ([]*rest.Endpoint, error) {
 }
 
 func (r Response) toRest() (rest.Response, error) {
-	if r.Delay < 0 {
-		return rest.Response{}, errors.New("response delay cannot be negative")
+	var respDelay time.Duration
+	if len(r.Delay) > 0 {
+		d, err := time.ParseDuration(r.Delay)
+		if err != nil {
+			return rest.Response{}, fmt.Errorf("invalid response delay: %q", r.Delay)
+		}
+		respDelay = d
 	}
 
 	if r.Body.Literal != "" && r.Body.FilePath != "" {
@@ -118,7 +123,7 @@ func (r Response) toRest() (rest.Response, error) {
 		StatusCode: r.StatusCode,
 		Headers:    r.Headers,
 		Body:       respBody,
-		Delay:      r.Delay,
+		Delay:      respDelay,
 	}
 
 	return resp, nil
