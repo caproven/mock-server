@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type ResponseResolver interface {
@@ -135,6 +136,7 @@ type Response struct {
 	Headers    map[string]string
 	Body       []byte
 	StatusCode int
+	Delay      time.Duration
 }
 
 type httpMux interface {
@@ -157,6 +159,10 @@ func RegisterHandlers(mux httpMux, endpoints []*Endpoint) {
 			)
 
 			resp := endpoint.Response()
+
+			if resp.Delay != 0 {
+				time.Sleep(resp.Delay)
+			}
 
 			for header, val := range resp.Headers {
 				w.Header().Set(header, val)
