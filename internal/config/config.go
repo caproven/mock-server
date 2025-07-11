@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/caproven/mock-server/internal/rest"
 )
@@ -43,6 +44,7 @@ type Response struct {
 	StatusCode int               `yaml:"status"`
 	Headers    map[string]string `yaml:"headers"`
 	Body       ResponseBody      `yaml:"body"`
+	Delay      time.Duration     `yaml:"delay"`
 }
 
 type ResponseBody struct {
@@ -95,6 +97,10 @@ func (c Config) RestEndpoints() ([]*rest.Endpoint, error) {
 }
 
 func (r Response) toRest() (rest.Response, error) {
+	if r.Delay < 0 {
+		return rest.Response{}, errors.New("response delay cannot be negative")
+	}
+
 	if r.Body.Literal != "" && r.Body.FilePath != "" {
 		return rest.Response{}, errors.New("response body cannot use both literal and path")
 	}
@@ -112,6 +118,7 @@ func (r Response) toRest() (rest.Response, error) {
 		StatusCode: r.StatusCode,
 		Headers:    r.Headers,
 		Body:       respBody,
+		Delay:      r.Delay,
 	}
 
 	return resp, nil
