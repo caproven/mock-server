@@ -21,69 +21,95 @@ func (r StaticResponse) NextResponse() Response {
 	return Response(r)
 }
 
-type WeightedResponse struct {
-	responses   []Response
-	weights     []int
-	weightTotal int
+type numberGenerator interface {
+	// N returns an integer in the half-open interval [0, n).
+	N(n int) int
 }
 
-func NewWeightedResponse(weightedResponses map[*Response]int) (*WeightedResponse, error) {
-	if len(weightedResponses) == 0 {
+type rng struct{}
+
+func (r rng) N(n int) int {
+	return rand.N(n)
+}
+
+type WeightedResponse struct {
+	numGenerator numberGenerator
+	responses    []Response
+	weights      []int
+	weightTotal  int
+}
+
+type WeightedResponseEntry struct {
+	Response Response
+	Weight   int
+}
+
+// NewWeightedResponse builds a weighted response strategy from the given responses.
+// If numGenerator is nil, a random source is used.
+func NewWeightedResponse(entries []WeightedResponseEntry, numGenerator numberGenerator) (*WeightedResponse, error) {
+	// entries imo makes more sense as a map, but switched to a slice so internal ordering is deterministic
+	if len(entries) == 0 {
 		return nil, errors.New("no weighted responses")
+	}
+
+	if numGenerator == nil {
+		numGenerator = rng{}
 	}
 
 	var weightTotal int
 	var responses []Response
 	var weights []int
 
-	for resp, weight := range weightedResponses {
-		if weight <= 0 {
+	for _, entry := range entries {
+		if entry.Weight <= 0 {
 			return nil, errors.New("weight must be >= 1")
 		}
-		weightTotal += weight
+		weightTotal += entry.Weight
 		weights = append(weights, weightTotal)
-		responses = append(responses, *resp)
+		responses = append(responses, entry.Response)
 	}
 
 	return &WeightedResponse{
-		responses:   responses,
-		weights:     weights,
-		weightTotal: weightTotal,
+		numGenerator: numGenerator,
+		responses:    responses,
+		weights:      weights,
+		weightTotal:  weightTotal,
 	}, nil
 }
 
 func (w *WeightedResponse) NextResponse() Response {
-	val := rand.N(w.weightTotal)
+	val := w.numGenerator.N(w.weightTotal)
 
 	for i, weight := range w.weights {
 		if val < weight {
 			return w.responses[i]
 		}
 	}
-	// TODO how to test this? This shouldn't be able to fail but loop may end
 
-	slog.Warn("didn't find a weighted response")
-	return Response{}
+	// At present, it doesn't make sense for NextResponse implementations to fail as there
+	// should always be a response to return. Opting to panic when invariant is broken,
+	// but may switch to returning error in the future.
+	panic("number generator should always return a valid weight")
 }
 
-type SequenceEndBehavior string
+type SequenceBehavior string
 
 const (
-	SequenceEndBehaviorLoop       SequenceEndBehavior = "loop"
-	SequenceEndBehaviorRepeatLast SequenceEndBehavior = "repeatLast"
+	SequenceBehaviorLoop       SequenceBehavior = "loop"
+	SequenceBehaviorRepeatLast SequenceBehavior = "repeatLast"
 )
 
 type SequencedResponse struct {
-	endBehavior SequenceEndBehavior
+	endBehavior SequenceBehavior
 	sequence    []Response
 
 	idx int
 	mu  sync.Mutex
 }
 
-func NewSequencedResponse(endBehavior SequenceEndBehavior, sequence []Response) (*SequencedResponse, error) {
+func NewSequencedResponse(endBehavior SequenceBehavior, sequence []Response) (*SequencedResponse, error) {
 	switch endBehavior {
-	case SequenceEndBehaviorLoop, SequenceEndBehaviorRepeatLast:
+	case SequenceBehaviorLoop, SequenceBehaviorRepeatLast:
 	default:
 		return nil, fmt.Errorf("unknown sequence end behavior %q", endBehavior)
 	}
@@ -105,7 +131,7 @@ func (s *SequencedResponse) NextResponse() Response {
 	resp := s.sequence[s.idx]
 	if s.idx < len(s.sequence)-1 { // have remaining sequence
 		s.idx++
-	} else if s.idx >= len(s.sequence)-1 && s.endBehavior == SequenceEndBehaviorLoop {
+	} else if s.idx >= len(s.sequence)-1 && s.endBehavior == SequenceBehaviorLoop {
 		s.idx++
 		s.idx %= len(s.sequence)
 	}

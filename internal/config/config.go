@@ -133,17 +133,20 @@ func (r Response) toRest() (rest.Response, error) {
 }
 
 func convertWeightedToRest(weighted []WeightedResponse) (*rest.WeightedResponse, error) {
-	weightedMap := make(map[*rest.Response]int)
+	var entries []rest.WeightedResponseEntry
 
 	for _, weightedRespCfg := range weighted {
 		resp, err := weightedRespCfg.Response.toRest()
 		if err != nil {
 			return nil, fmt.Errorf("build weighted response: %w", err)
 		}
-		weightedMap[&resp] = weightedRespCfg.Weight
+		entries = append(entries, rest.WeightedResponseEntry{
+			Response: resp,
+			Weight:   weightedRespCfg.Weight,
+		})
 	}
 
-	return rest.NewWeightedResponse(weightedMap)
+	return rest.NewWeightedResponse(entries, nil)
 }
 
 func convertSequencedToRest(sequencedResp *SequencedResponse) (*rest.SequencedResponse, error) {
@@ -168,9 +171,9 @@ func convertSequencedToRest(sequencedResp *SequencedResponse) (*rest.SequencedRe
 		}
 	}
 
-	endBehavior := rest.SequenceEndBehaviorRepeatLast
+	endBehavior := rest.SequenceBehaviorRepeatLast
 	if sequencedResp.EndBehavior != "" {
-		endBehavior = rest.SequenceEndBehavior(sequencedResp.EndBehavior)
+		endBehavior = rest.SequenceBehavior(sequencedResp.EndBehavior)
 	}
 	return rest.NewSequencedResponse(endBehavior, sequence)
 }
