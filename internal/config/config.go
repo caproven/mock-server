@@ -97,22 +97,27 @@ func (c Config) RestEndpoints() ([]*rest.Endpoint, error) {
 }
 
 func (r Response) toRest() (rest.Response, error) {
-	var respDelay time.Duration
+	var respOpts []rest.ResponseOption
+
+	if len(r.Headers) > 0 {
+		respOpts = append(respOpts, rest.WithResponseHeaders(r.Headers))
+	}
+
+	if r.StatusCode != 0 {
+		respOpts = append(respOpts, rest.WithResponseStatus(r.StatusCode))
+	}
+
 	if len(r.Delay) > 0 {
 		d, err := time.ParseDuration(r.Delay)
 		if err != nil {
 			return rest.Response{}, fmt.Errorf("invalid response delay %q", r.Delay)
 		}
-		if d < 0 {
-			return rest.Response{}, errors.New("response delay cannot be negative")
-		}
-		respDelay = d
+		respOpts = append(respOpts, rest.WithResponseDelay(d))
 	}
 
 	if r.Body.Literal != "" && r.Body.FilePath != "" {
 		return rest.Response{}, errors.New("response body cannot use both literal and path")
 	}
-
 	respBody := []byte(r.Body.Literal)
 	if r.Body.FilePath != "" {
 		data, err := os.ReadFile(r.Body.FilePath)
@@ -121,12 +126,13 @@ func (r Response) toRest() (rest.Response, error) {
 		}
 		respBody = data
 	}
+	if len(respBody) > 0 {
+		respOpts = append(respOpts, rest.WithResponseBody(respBody))
+	}
 
-	resp := rest.Response{
-		StatusCode: r.StatusCode,
-		Headers:    r.Headers,
-		Body:       respBody,
-		Delay:      respDelay,
+	resp, err := rest.NewResponse(respOpts...)
+	if err != nil {
+		return rest.Response{}, fmt.Errorf("build response: %w", err)
 	}
 
 	return resp, nil

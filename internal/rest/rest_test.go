@@ -9,14 +9,127 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewResponse(t *testing.T) {
+	cases := map[string]struct {
+		opts    []ResponseOption
+		want    Response
+		wantErr bool
+	}{
+		"all defaults": {
+			want: Response{
+				statusCode: http.StatusOK,
+			},
+		},
+		"status code too low": {
+			opts: []ResponseOption{
+				WithResponseStatus(0),
+			},
+			wantErr: true,
+		},
+		"status code too high": {
+			opts: []ResponseOption{
+				WithResponseStatus(600),
+			},
+			wantErr: true,
+		},
+		"valid status code": {
+			opts: []ResponseOption{
+				WithResponseStatus(http.StatusTooManyRequests),
+			},
+			want: Response{
+				statusCode: http.StatusTooManyRequests,
+			},
+		},
+		"body": {
+			opts: []ResponseOption{
+				WithResponseBody([]byte("user created")),
+			},
+			want: Response{
+				statusCode: http.StatusOK,
+				body:       []byte("user created"),
+			},
+		},
+		"headers": {
+			opts: []ResponseOption{
+				WithResponseHeaders(map[string]string{
+					"Content-Type":         "application/json",
+					"X-Remaining-Requests": "50",
+				}),
+			},
+			want: Response{
+				statusCode: http.StatusOK,
+				headers: map[string]string{
+					"Content-Type":         "application/json",
+					"X-Remaining-Requests": "50",
+				},
+			},
+		},
+		"negative delay": {
+			opts: []ResponseOption{
+				WithResponseDelay(-1 * time.Second),
+			},
+			wantErr: true,
+		},
+		"zero delay": {
+			opts: []ResponseOption{
+				WithResponseDelay(0),
+			},
+			want: Response{
+				statusCode: http.StatusOK,
+			},
+		},
+		"positive delay": {
+			opts: []ResponseOption{
+				WithResponseDelay(5 * time.Second),
+			},
+			want: Response{
+				statusCode: http.StatusOK,
+				delay:      5 * time.Second,
+			},
+		},
+		"composite": {
+			opts: []ResponseOption{
+				WithResponseStatus(http.StatusCreated),
+				WithResponseHeaders(map[string]string{
+					"Content-Type": "application/json",
+				}),
+				WithResponseBody([]byte(`{"id":"qwerty1234"}`)),
+				WithResponseDelay(50 * time.Millisecond),
+			},
+			want: Response{
+				headers: map[string]string{
+					"Content-Type": "application/json",
+				},
+				body:       []byte(`{"id":"qwerty1234"}`),
+				statusCode: http.StatusCreated,
+				delay:      50 * time.Millisecond,
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp, err := NewResponse(tc.opts...)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Zero(t, resp)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, resp)
+		})
+	}
+}
+
 func TestStaticResponse(t *testing.T) {
 	resp := Response{
-		Headers: map[string]string{
+		headers: map[string]string{
 			"Content-Type": "application/json",
 		},
-		Body:       []byte(`{"email":"johndoe@acme.com","title":"Staff Engineer"}`),
-		StatusCode: http.StatusCreated,
-		Delay:      3 * time.Second,
+		body:       []byte(`{"email":"johndoe@acme.com","title":"Staff Engineer"}`),
+		statusCode: http.StatusCreated,
+		delay:      3 * time.Second,
 	}
 	strategy := StaticResponse(resp)
 
@@ -40,9 +153,20 @@ func TestSequencedResponse(t *testing.T) {
 		assert.Nil(t, strategy)
 	})
 
+	t.Run("invalid end behavior", func(t *testing.T) {
+		responses := []Response{
+			{
+				body: []byte("unused"),
+			},
+		}
+		strategy, err := NewSequencedResponse(SequenceBehavior("invalid"), responses)
+		assert.Error(t, err)
+		assert.Nil(t, strategy)
+	})
+
 	t.Run("loop with sequence length 1", func(t *testing.T) {
 		resp := Response{
-			StatusCode: http.StatusNotFound,
+			statusCode: http.StatusNotFound,
 		}
 		strategy, err := NewSequencedResponse(SequenceBehaviorLoop, []Response{resp})
 		require.NoError(t, err)
@@ -55,8 +179,8 @@ func TestSequencedResponse(t *testing.T) {
 
 	t.Run("repeat last with sequence length 1", func(t *testing.T) {
 		resp := Response{
-			StatusCode: http.StatusGatewayTimeout,
-			Body:       []byte("gateway timed out"),
+			statusCode: http.StatusGatewayTimeout,
+			body:       []byte("gateway timed out"),
 		}
 		strategy, err := NewSequencedResponse(SequenceBehaviorRepeatLast, []Response{resp})
 		require.NoError(t, err)
@@ -69,10 +193,10 @@ func TestSequencedResponse(t *testing.T) {
 
 	t.Run("loop with multiple responses", func(t *testing.T) {
 		first := Response{
-			StatusCode: http.StatusOK,
+			statusCode: http.StatusOK,
 		}
 		second := Response{
-			StatusCode: http.StatusNotFound,
+			statusCode: http.StatusNotFound,
 		}
 		strategy, err := NewSequencedResponse(SequenceBehaviorLoop, []Response{first, second})
 		require.NoError(t, err)
@@ -90,13 +214,13 @@ func TestSequencedResponse(t *testing.T) {
 
 	t.Run("repeat last with multiple responses", func(t *testing.T) {
 		first := Response{
-			Body: []byte("first response"),
+			body: []byte("first response"),
 		}
 		second := Response{
-			Body: []byte("second response"),
+			body: []byte("second response"),
 		}
 		third := Response{
-			Body: []byte("third response"),
+			body: []byte("third response"),
 		}
 		responses := []Response{first, second, third}
 		strategy, err := NewSequencedResponse(SequenceBehaviorRepeatLast, responses)
@@ -136,13 +260,13 @@ func TestWeightedResponse(t *testing.T) {
 		entries := []WeightedResponseEntry{
 			{
 				Response: Response{
-					StatusCode: http.StatusOK,
+					statusCode: http.StatusOK,
 				},
 				Weight: 5,
 			},
 			{
 				Response: Response{
-					StatusCode: http.StatusTeapot,
+					statusCode: http.StatusTeapot,
 				},
 				Weight: 1,
 			},
@@ -161,7 +285,7 @@ func TestWeightedResponse(t *testing.T) {
 		entries := []WeightedResponseEntry{
 			{
 				Response: Response{
-					Body: []byte("has zero weight"),
+					body: []byte("has zero weight"),
 				},
 				Weight: 0,
 			},
@@ -175,7 +299,7 @@ func TestWeightedResponse(t *testing.T) {
 		entries := []WeightedResponseEntry{
 			{
 				Response: Response{
-					Body: []byte("has negative weight"),
+					body: []byte("has negative weight"),
 				},
 				Weight: -3,
 			},
@@ -187,8 +311,8 @@ func TestWeightedResponse(t *testing.T) {
 
 	t.Run("single response", func(t *testing.T) {
 		resp := Response{
-			StatusCode: http.StatusOK,
-			Body:       []byte("foo bar baz"),
+			statusCode: http.StatusOK,
+			body:       []byte("foo bar baz"),
 		}
 		weight := 5
 		entries := []WeightedResponseEntry{
@@ -214,22 +338,22 @@ func TestWeightedResponse(t *testing.T) {
 		entries := []WeightedResponseEntry{
 			{
 				Response: Response{
-					StatusCode: http.StatusOK,
-					Body:       []byte("resp 1"),
+					statusCode: http.StatusOK,
+					body:       []byte("resp 1"),
 				},
 				Weight: 3,
 			},
 			{
 				Response: Response{
-					StatusCode: http.StatusBadRequest,
-					Body:       []byte("resp 2"),
+					statusCode: http.StatusBadRequest,
+					body:       []byte("resp 2"),
 				},
 				Weight: 1,
 			},
 			{
 				Response: Response{
-					StatusCode: http.StatusConflict,
-					Body:       []byte("resp 3"),
+					statusCode: http.StatusConflict,
+					body:       []byte("resp 3"),
 				},
 				Weight: 2,
 			},
@@ -254,7 +378,7 @@ func TestWeightedResponse(t *testing.T) {
 		entries := []WeightedResponseEntry{
 			{
 				Response: Response{
-					StatusCode: http.StatusOK,
+					statusCode: http.StatusOK,
 				},
 				Weight: 1,
 			},

@@ -158,11 +158,63 @@ func (p *Endpoint) Response() Response {
 	return p.responseResolver.NextResponse()
 }
 
+type ResponseOption func(*Response) error
+
 type Response struct {
-	Headers    map[string]string
-	Body       []byte
-	StatusCode int
-	Delay      time.Duration
+	headers    map[string]string
+	body       []byte
+	statusCode int
+	delay      time.Duration
+}
+
+func WithResponseHeaders(headers map[string]string) ResponseOption {
+	return func(r *Response) error {
+		r.headers = headers
+		return nil
+	}
+}
+
+func WithResponseBody(body []byte) ResponseOption {
+	return func(r *Response) error {
+		r.body = body
+		return nil
+	}
+}
+
+func WithResponseStatus(statusCode int) ResponseOption {
+	return func(r *Response) error {
+		if statusCode < 100 || statusCode > 599 {
+			return fmt.Errorf("invalid status code: %d", statusCode)
+		}
+		r.statusCode = statusCode
+		return nil
+	}
+}
+
+func WithResponseDelay(delay time.Duration) ResponseOption {
+	return func(r *Response) error {
+		if delay < 0 {
+			return errors.New("delay cannot be negative")
+		}
+		r.delay = delay
+		return nil
+	}
+}
+
+func NewResponse(opts ...ResponseOption) (Response, error) {
+	var resp Response
+
+	for _, opt := range opts {
+		if err := opt(&resp); err != nil {
+			return Response{}, fmt.Errorf("apply response option: %w", err)
+		}
+	}
+
+	if resp.statusCode == 0 {
+		resp.statusCode = http.StatusOK
+	}
+
+	return resp, nil
 }
 
 type httpMux interface {
@@ -186,15 +238,15 @@ func RegisterHandlers(mux httpMux, endpoints []*Endpoint) {
 
 			resp := endpoint.Response()
 
-			if resp.Delay != 0 {
-				time.Sleep(resp.Delay)
+			if resp.delay != 0 {
+				time.Sleep(resp.delay)
 			}
 
-			for header, val := range resp.Headers {
+			for header, val := range resp.headers {
 				w.Header().Set(header, val)
 			}
-			w.WriteHeader(resp.StatusCode)
-			if _, err := w.Write(resp.Body); err != nil {
+			w.WriteHeader(resp.statusCode)
+			if _, err := w.Write(resp.body); err != nil {
 				slog.Warn("failed to write response", "err", err)
 				return
 			}
